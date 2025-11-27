@@ -6,7 +6,7 @@ const cleanText = (text: string): string => {
   return text.replace(/```/g, '').replace(/\n/g, ' ').trim();
 };
 
-export const generatePracticeText = async (topic: string, difficulty: Difficulty): Promise<string> => {
+export const generatePracticeText = async (topic: string, difficulty: Difficulty, isLong: boolean = false): Promise<string> => {
   if (!process.env.API_KEY) {
     throw new Error("API Key is missing");
   }
@@ -14,19 +14,20 @@ export const generatePracticeText = async (topic: string, difficulty: Difficulty
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   let prompt = "";
+  const lengthDesc = isLong ? "approx 200 words" : "approx 50 words";
   
   switch (difficulty) {
     case Difficulty.EASY:
-      prompt = `Generate a simple, easy-to-type paragraph about ${topic}. Use common words, short sentences, and minimal punctuation. Length: approx 30 words. Return ONLY the raw text.`;
+      prompt = `Generate a simple, easy-to-type paragraph about ${topic}. Use common words, short sentences, and minimal punctuation. Length: ${isLong ? "approx 100 words" : "approx 30 words"}. Return ONLY the raw text.`;
       break;
     case Difficulty.NORMAL:
-      prompt = `Generate an interesting paragraph about ${topic}. Standard English difficulty. Length: approx 50 words. Return ONLY the raw text.`;
+      prompt = `Generate an interesting paragraph about ${topic}. Standard English difficulty. Length: ${lengthDesc}. Return ONLY the raw text.`;
       break;
     case Difficulty.HARD:
-      prompt = `Generate a complex paragraph about ${topic}. Use advanced vocabulary, varied punctuation (semicolons, hyphens), and longer sentences. Length: approx 60 words. Return ONLY the raw text.`;
+      prompt = `Generate a complex paragraph about ${topic}. Use advanced vocabulary, varied punctuation (semicolons, hyphens), and longer sentences. Length: ${lengthDesc}. Return ONLY the raw text.`;
       break;
     case Difficulty.CODE:
-      prompt = `Generate a snippet of valid JavaScript/TypeScript code (no comments) related to ${topic}. Include brackets, parentheses, and camelCase variables. Length: approx 15 lines flattened to a single line or short block. Return ONLY the code text.`;
+      prompt = `Generate a snippet of valid JavaScript/TypeScript code (no comments) related to ${topic}. Include brackets, parentheses, and camelCase variables. Length: ${isLong ? "approx 30 lines" : "approx 15 lines"} flattened to a single line or short block. Return ONLY the code text.`;
       break;
   }
 

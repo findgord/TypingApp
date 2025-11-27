@@ -19,6 +19,10 @@ const App: React.FC = () => {
   const [difficulty, setDifficulty] = useState<Difficulty>(Difficulty.NORMAL);
   const [topic, setTopic] = useState<string>("Technology");
 
+  // Timer Configuration
+  const [isTimed, setIsTimed] = useState(false);
+  const [selectedTimeLimit, setSelectedTimeLimit] = useState(60);
+
   // Custom Hook for Typing Logic
   const {
     text,
@@ -29,6 +33,8 @@ const App: React.FC = () => {
     errors,
     startTime,
     inputMode,
+    timeLeft,
+    timeLimit, // Actual engine time limit
     setInputMode,
     resetEngine,
     setText,
@@ -50,9 +56,14 @@ const App: React.FC = () => {
     try {
       let newText = customText;
       if (!newText) {
-         newText = await generatePracticeText(topic, difficulty);
+         // If timed mode is active, request longer text
+         newText = await generatePracticeText(topic, difficulty, isTimed);
       }
-      resetEngine();
+      
+      // Pass the configured time limit to the engine. 0 if untimed.
+      const engineTimeLimit = isTimed ? selectedTimeLimit : 0;
+      resetEngine(engineTimeLimit);
+      
       setText(newText);
     } catch (err) {
       setError("Failed to generate text. Please check your API key or connection.");
@@ -76,13 +87,15 @@ const App: React.FC = () => {
       
       if (topMissed.length === 0) {
         // No errors, just harder text
-        const newText = await generatePracticeText(topic, Difficulty.HARD);
-        resetEngine();
+        const newText = await generatePracticeText(topic, Difficulty.HARD, isTimed);
+        const engineTimeLimit = isTimed ? selectedTimeLimit : 0;
+        resetEngine(engineTimeLimit);
         setText(newText);
         setMode(GameMode.DRILL);
       } else {
         const drillText = await generateRemedialDrill(topMissed);
-        resetEngine();
+        const engineTimeLimit = isTimed ? selectedTimeLimit : 0;
+        resetEngine(engineTimeLimit);
         setText(drillText);
         setMode(GameMode.DRILL);
       }
@@ -120,6 +133,18 @@ const App: React.FC = () => {
     }
   };
 
+  // Helper to safely update timer config and reset engine if not running
+  const updateTimerConfig = (newIsTimed: boolean, newLimit: number) => {
+    setIsTimed(newIsTimed);
+    setSelectedTimeLimit(newLimit);
+    
+    // If not running, update engine immediately to reflect time on UI
+    if (status === TypingState.IDLE) {
+      const limit = newIsTimed ? newLimit : 0;
+      resetEngine(limit);
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col max-w-5xl mx-auto px-4 py-8">
       <Header />
@@ -137,11 +162,18 @@ const App: React.FC = () => {
                setTopic={setTopic}
                inputMode={inputMode}
                setInputMode={(m) => {
-                 resetEngine();
+                 const engineTimeLimit = isTimed ? selectedTimeLimit : 0;
+                 resetEngine(engineTimeLimit);
                  setInputMode(m);
                }}
                onApply={(text) => loadNewGame(text)}
                disabled={status === TypingState.RUNNING || analyzing}
+               
+               // Timer Config
+               isTimed={isTimed}
+               setIsTimed={(val) => updateTimerConfig(val, selectedTimeLimit)}
+               timeLimit={selectedTimeLimit}
+               setTimeLimit={(val) => updateTimerConfig(isTimed, val)}
              />
           </div>
           
@@ -150,7 +182,8 @@ const App: React.FC = () => {
               wpm={wpm} 
               accuracy={accuracy} 
               status={status} 
-              timeLeft={0} 
+              timeLeft={timeLeft}
+              timeLimit={timeLimit}
               errors={Object.keys(errors).length}
             />
             
@@ -184,7 +217,7 @@ const App: React.FC = () => {
                   {/* Overlay for Restart/Focus hint */}
                   {status === TypingState.IDLE && userInput.length === 0 && inputMode === InputMode.KEYBOARD && (
                     <div className="absolute top-4 right-4 text-slate-400 dark:text-slate-500 text-xs font-mono animate-pulse">
-                      Start typing to begin...
+                      {timeLimit > 0 ? `Timed Mode: ${timeLimit}s` : 'Start typing to begin...'}
                     </div>
                   )}
                 </>

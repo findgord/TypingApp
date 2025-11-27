@@ -1,5 +1,5 @@
 import React from 'react';
-import { Gauge, Target, Activity, Clock } from 'lucide-react';
+import { Gauge, Target, Activity, Clock, Timer } from 'lucide-react';
 import { TypingState } from '../types';
 
 interface Props {
@@ -7,10 +7,23 @@ interface Props {
   accuracy: number;
   status: TypingState;
   timeLeft: number;
+  timeLimit: number;
   errors: number;
 }
 
-export const StatsBoard: React.FC<Props> = ({ wpm, accuracy, status, errors }) => {
+const formatTime = (seconds: number) => {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+};
+
+export const StatsBoard: React.FC<Props> = ({ wpm, accuracy, status, timeLeft, timeLimit, errors }) => {
+  // Determine what to show in the time box
+  const showCountdown = timeLimit > 0;
+  
+  // If timed, show timeLeft. If untimed, we could show elapsed (not implemented passed prop yet), 
+  // or just status. For now we show Status in untimed, and Time Left in timed.
+  
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
       <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-brand-accent shadow-sm flex flex-col items-center justify-center gap-1 transition-colors">
@@ -42,10 +55,11 @@ export const StatsBoard: React.FC<Props> = ({ wpm, accuracy, status, errors }) =
 
       <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-brand-accent shadow-sm flex flex-col items-center justify-center gap-1">
          <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider font-bold">
-            <Clock className="w-4 h-4" /> Status
+            {showCountdown ? <Timer className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
+            {showCountdown ? 'Time Left' : 'Status'}
         </div>
-        <span className="text-lg font-mono font-bold text-slate-600 dark:text-slate-300">
-            {status === 'RUNNING' ? 'Typing...' : status === 'FINISHED' ? 'Done' : 'Ready'}
+        <span className={`text-xl font-mono font-bold ${showCountdown && timeLeft <= 10 && status === 'RUNNING' ? 'text-red-500 animate-pulse' : 'text-slate-600 dark:text-slate-300'}`}>
+            {showCountdown ? formatTime(timeLeft) : (status === 'RUNNING' ? 'Typing...' : status === 'FINISHED' ? 'Done' : 'Ready')}
         </span>
       </div>
     </div>

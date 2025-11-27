@@ -33,7 +33,13 @@ export const useTypingEngine = () => {
   const [accuracy, setAccuracy] = useState(100);
   const [errors, setErrors] = useState<Record<string, number>>({});
 
-  const timerRef = useRef<number | null>(null);
+  // Timer State
+  const [timeLimit, setTimeLimit] = useState<number>(0); // 0 means untimed
+  const [timeLeft, setTimeLeft] = useState<number>(0);
+
+  // Refs for Game Loop to avoid dependency staleness without re-renders
+  const userInputRef = useRef("");
+  const startTimeRef = useRef<number | null>(null);
   
   // Voice State Refs
   const liveSessionRef = useRef<Promise<any> | null>(null);
@@ -42,45 +48,85 @@ export const useTypingEngine = () => {
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   
-  const calculateStats = useCallback(() => {
-    // Only auto-calculate stats in Keyboard mode
-    if (inputMode === InputMode.VOICE || !startTime) return;
-    
+  // Sync refs with state
+  useEffect(() => {
+    userInputRef.current = userInput;
+  }, [userInput]);
+
+  // Main Game Loop (Timer & Stats)
+  useEffect(() => {
+    let intervalId: number;
+
+    if (status === TypingState.RUNNING && inputMode === InputMode.KEYBOARD) {
+      intervalId = window.setInterval(() => {
+        const now = Date.now();
+        const start = startTimeRef.current || now;
+        const elapsedSeconds = (now - start) / 1000;
+        
+        // 1. Handle Timer Countdown
+        if (timeLimit > 0) {
+          const remaining = Math.max(0, Math.ceil(timeLimit - elapsedSeconds));
+          setTimeLeft(remaining);
+
+          if (remaining <= 0) {
+            // Time is up!
+            setStatus(TypingState.FINISHED);
+            // We do not need to clear interval here, React cleanup will do it when status changes
+          }
+        }
+
+        // 2. Live Stats Update
+        // Avoid calculating if time is 0 to prevent Infinity
+        if (elapsedSeconds > 0) {
+          const currentInput = userInputRef.current;
+          const wordsTyped = currentInput.length / 5;
+          const currentWpm = Math.round(wordsTyped / (elapsedSeconds / 60));
+          setWpm(currentWpm);
+          
+          // Recalculate accuracy based on current snapshot
+          let correctChars = 0;
+          for (let i = 0; i < currentInput.length; i++) {
+             // Safe access even if text isn't in ref (it's stable usually)
+             if (currentInput[i] === text[i]) correctChars++;
+          }
+          const currentAcc = currentInput.length > 0 ? Math.round((correctChars / currentInput.length) * 100) : 100;
+          setAccuracy(currentAcc);
+        }
+
+      }, 1000);
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [status, inputMode, timeLimit, text]); // Intentionally exclude userInput to prevent timer resets
+
+  // Calculates final stats (used for completion)
+  const calculateFinalStats = useCallback(() => {
+    if (!startTime) return;
     const now = Date.now();
     const elapsedMin = (now - startTime) / 60000;
-    
+    if (elapsedMin <= 0) return;
+
     const wordsTyped = userInput.length / 5;
-    const currentWpm = elapsedMin > 0 ? Math.round(wordsTyped / elapsedMin) : 0;
-    
-    let correctChars = 0;
-    for (let i = 0; i < userInput.length; i++) {
-      if (userInput[i] === text[i]) correctChars++;
-    }
-    const currentAcc = userInput.length > 0 ? Math.round((correctChars / userInput.length) * 100) : 100;
-
+    const currentWpm = Math.round(wordsTyped / elapsedMin);
     setWpm(currentWpm);
-    setAccuracy(currentAcc);
-  }, [startTime, userInput, text, inputMode]);
+  }, [startTime, userInput]);
 
-  useEffect(() => {
-    if (status === TypingState.RUNNING && inputMode === InputMode.KEYBOARD) {
-      timerRef.current = window.setInterval(() => {
-        calculateStats();
-      }, 1000);
-    } else if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [status, calculateStats, inputMode]);
 
   const handleInput = useCallback((input: string) => {
     if (status === TypingState.FINISHED || inputMode === InputMode.VOICE) return;
 
     if (status === TypingState.IDLE && input.length === 1) {
       setStatus(TypingState.RUNNING);
-      setStartTime(Date.now());
+      const now = Date.now();
+      setStartTime(now);
+      startTimeRef.current = now;
+      
+      // Initialize countdown display immediately
+      if (timeLimit > 0) {
+        setTimeLeft(timeLimit);
+      }
     }
 
     if (input.length > userInput.length) {
@@ -98,11 +144,12 @@ export const useTypingEngine = () => {
 
     setUserInput(input);
 
+    // End condition for standard mode: typed everything
     if (input.length === text.length) {
       setStatus(TypingState.FINISHED);
-      calculateStats();
+      calculateFinalStats();
     }
-  }, [status, userInput, text, calculateStats, inputMode]);
+  }, [status, userInput, text, calculateFinalStats, inputMode, timeLimit]);
 
   // --- Voice Logic (Gemini Live API) ---
 
@@ -137,13 +184,11 @@ export const useTypingEngine = () => {
       
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
-      // IMPORTANT: Do NOT await this. We need the promise to queue messages.
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         callbacks: {
            onopen: () => console.log("Voice session connected"),
            onmessage: (msg: LiveServerMessage) => {
-             // Handle transcription
              if (msg.serverContent?.inputTranscription) {
                const chunk = msg.serverContent.inputTranscription.text;
                if (chunk) {
@@ -166,7 +211,6 @@ export const useTypingEngine = () => {
         }
       });
       
-      // Catch initial connection errors
       sessionPromise.catch(err => {
         console.error("Session connection failed", err);
         cleanupAudio();
@@ -175,7 +219,6 @@ export const useTypingEngine = () => {
 
       liveSessionRef.current = sessionPromise;
 
-      // Start Microphone
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           channelCount: 1,
@@ -190,7 +233,6 @@ export const useTypingEngine = () => {
       const source = audioContext.createMediaStreamSource(stream);
       sourceRef.current = source;
 
-      // Use ScriptProcessor for raw PCM access (bufferSize: 4096)
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
 
@@ -199,7 +241,6 @@ export const useTypingEngine = () => {
         const pcm16 = floatTo16BitPCM(inputData);
         const base64Data = base64EncodeAudio(pcm16);
         
-        // Stream to Gemini using the promise
         sessionPromise.then((session) => {
           session.sendRealtimeInput({
             media: {
@@ -213,13 +254,13 @@ export const useTypingEngine = () => {
       source.connect(processor);
       processor.connect(audioContext.destination);
 
-      // UI Updates
       setStatus(TypingState.RUNNING);
       setStartTime(Date.now());
+      startTimeRef.current = Date.now();
       setWpm(0);
       setAccuracy(100);
       setErrors({});
-      setUserInput(""); // Clear for new session
+      setUserInput(""); 
 
     } catch (err) {
       console.error("Failed to start voice session:", err);
@@ -232,20 +273,17 @@ export const useTypingEngine = () => {
     cleanupAudio();
     if (liveSessionRef.current) {
       try {
-        // Resolve the promise to get the actual session object before closing
         const session = await liveSessionRef.current;
         // @ts-ignore
         session.close && session.close();
       } catch (e) { /* ignore */ }
       liveSessionRef.current = null;
     }
-    
     setStatus(TypingState.FINISHED);
     return userInput;
   };
 
   const setVoiceStats = (transcription: string, wpm: number, accuracy: number, errors: Record<string, number>) => {
-    // We keep the transcription that was built up, or update it if the analysis normalized it
     setUserInput(transcription); 
     setWpm(wpm);
     setAccuracy(accuracy);
@@ -253,7 +291,7 @@ export const useTypingEngine = () => {
     setStatus(TypingState.FINISHED);
   };
 
-  const resetEngine = () => {
+  const resetEngine = (newTimeLimit?: number) => {
     cleanupAudio();
     if (liveSessionRef.current) {
         try { 
@@ -262,9 +300,18 @@ export const useTypingEngine = () => {
         } catch(e) {}
         liveSessionRef.current = null;
     }
+    
+    if (newTimeLimit !== undefined) {
+      setTimeLimit(newTimeLimit);
+      setTimeLeft(newTimeLimit);
+    } else {
+      setTimeLeft(timeLimit);
+    }
+
     setUserInput("");
     setStatus(TypingState.IDLE);
     setStartTime(null);
+    startTimeRef.current = null;
     setWpm(0);
     setAccuracy(100);
     setErrors({});
@@ -280,12 +327,14 @@ export const useTypingEngine = () => {
     errors,
     startTime,
     inputMode,
+    timeLimit,
+    timeLeft,
+    setTimeLimit,
     setInputMode,
     handleInput,
     startVoiceSession,
     endVoiceSession,
     setVoiceStats,
-    resetEngine,
-    calculateStats
+    resetEngine
   };
 };
