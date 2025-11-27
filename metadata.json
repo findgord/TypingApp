@@ -1,0 +1,7 @@
+{
+  "name": "FlowType AI",
+  "description": "An intelligent typing tutor that uses Gemini to generate content and creates personalized drills based on your specific typing errors.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
